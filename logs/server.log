@@ -1,21 +1,9 @@
 INFO:     Will watch for changes in these directories: ['/home/workspace']
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [227] using StatReload
-INFO:     Started server process [229]
+INFO:     Started reloader process [347] using StatReload
+INFO:     Started server process [349]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     172.20.0.1:36330 - "HEAD / HTTP/1.1" 405 Method Not Allowed
-INFO:     172.20.0.1:45106 - "GET /api/markets HTTP/1.1" 502 Bad Gateway
-INFO:     172.20.0.1:45106 - "GET /api/markets HTTP/1.1" 200 OK
-INFO:     172.20.0.1:45122 - "GET /api/markets HTTP/1.1" 200 OK
-INFO:     172.20.0.1:37124 - "GET /api/markets HTTP/1.1" 200 OK
-INFO:     172.20.0.1:33724 - "GET /api/markets HTTP/1.1" 200 OK
-INFO:     172.20.0.1:42288 - "GET /api/markets HTTP/1.1" 502 Bad Gateway
-WARNING:  StatReload detected changes in 'main.py'. Reloading...
-INFO:     Shutting down
-INFO:     Waiting for application shutdown.
-INFO:     Application shutdown complete.
-INFO:     Finished server process [229]
-INFO:     Started server process [239]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
+INFO:     172.20.0.1:41876 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     172.20.0.1:39710 - "GET /api/markets HTTP/1.1" 502 Bad Gateway
+INFO:     172.20.0.1:39710 - "GET /api/markets HTTP/1.1" 502 Bad Gateway

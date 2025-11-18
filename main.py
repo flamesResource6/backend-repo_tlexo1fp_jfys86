@@ -1,8 +1,12 @@
 import os
-from fastapi import FastAPI
+from typing import Optional
+import requests
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from database import db, create_document, get_documents
 
-app = FastAPI()
+app = FastAPI(title="Crypto Platform API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -12,58 +16,121 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-def read_root():
-    return {"message": "Hello from FastAPI Backend!"}
+COINGECKO_API = "https://api.coingecko.com/api/v3"
+BINANCE_API = "https://api.binance.com/api/v3"
 
-@app.get("/api/hello")
-def hello():
-    return {"message": "Hello from the backend API!"}
+class CreatePortfolio(BaseModel):
+    name: str
+    address: Optional[str] = None
+
+class AddHolding(BaseModel):
+    portfolio_id: str
+    coin_id: str
+    symbol: str
+    amount: float
+
+@app.get("/")
+def root():
+    return {"message": "Crypto Platform Backend Running"}
 
 @app.get("/test")
 def test_database():
-    """Test endpoint to check if database is available and accessible"""
-    response = {
-        "backend": "✅ Running",
-        "database": "❌ Not Available",
-        "database_url": None,
-        "database_name": None,
-        "connection_status": "Not Connected",
-        "collections": []
-    }
-    
+    resp = {"backend": "✅ Running", "database": "❌ Not Available"}
     try:
-        # Try to import database module
-        from database import db
-        
         if db is not None:
-            response["database"] = "✅ Available"
-            response["database_url"] = "✅ Configured"
-            response["database_name"] = db.name if hasattr(db, 'name') else "✅ Connected"
-            response["connection_status"] = "Connected"
-            
-            # Try to list collections to verify connectivity
-            try:
-                collections = db.list_collection_names()
-                response["collections"] = collections[:10]  # Show first 10 collections
-                response["database"] = "✅ Connected & Working"
-            except Exception as e:
-                response["database"] = f"⚠️  Connected but Error: {str(e)[:50]}"
-        else:
-            response["database"] = "⚠️  Available but not initialized"
-            
-    except ImportError:
-        response["database"] = "❌ Database module not found (run enable-database first)"
+            resp["database"] = "✅ Available"
+            resp["collections"] = db.list_collection_names()
     except Exception as e:
-        response["database"] = f"❌ Error: {str(e)[:50]}"
-    
-    # Check environment variables
-    import os
-    response["database_url"] = "✅ Set" if os.getenv("DATABASE_URL") else "❌ Not Set"
-    response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
-    
-    return response
+        resp["database"] = f"⚠️ {str(e)[:120]}"
+    resp["database_url"] = "✅ Set" if os.getenv("DATABASE_URL") else "❌ Not Set"
+    resp["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
+    return resp
 
+# Helper to fetch Binance 24h stats for a symbol (e.g., BTCUSDT)
+
+def fetch_binance_ticker(symbol: str):
+    r = requests.get(f"{BINANCE_API}/ticker/24hr", params={"symbol": symbol}, timeout=10)
+    if r.status_code != 200:
+        return None
+    j = r.json()
+    return {
+        "lastPrice": float(j.get("lastPrice", 0)),
+        "priceChangePercent": float(j.get("priceChangePercent", 0)),
+        "symbol": j.get("symbol"),
+    }
+
+@app.get("/api/markets")
+def get_markets(page: int = 1, per_page: int = 20):
+    """
+    Markets endpoint combining CoinGecko logos/names with Binance prices.
+    Fallback to CoinGecko prices if a Binance symbol isn't available.
+    """
+    try:
+        cg_params = {
+            "vs_currency": "usd",
+            "order": "market_cap_desc",
+            "per_page": per_page,
+            "page": page,
+            "sparkline": "false",
+            "price_change_percentage": "24h",
+        }
+        r = requests.get(f"{COINGECKO_API}/coins/markets", params=cg_params, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        out = []
+        for c in data:
+            sym = (c.get("symbol") or "").upper()
+            binance_symbol = f"{sym}USDT"
+            ticker = fetch_binance_ticker(binance_symbol)
+            price = ticker["lastPrice"] if ticker else c.get("current_price")
+            change24 = ticker["priceChangePercent"] if ticker else c.get("price_change_percentage_24h")
+            out.append({
+                "id": c.get("id"),
+                "symbol": c.get("symbol"),
+                "name": c.get("name"),
+                "image": c.get("image"),
+                "current_price": price,
+                "price_change_percentage_24h": change24,
+                "binance_symbol": ticker["symbol"] if ticker else None,
+            })
+        return out
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+
+@app.get("/api/coin/{coin_id}")
+def get_coin(coin_id: str):
+    try:
+        r = requests.get(f"{COINGECKO_API}/coins/{coin_id}", params={"localization": "false"}, timeout=10)
+        r.raise_for_status()
+        j = r.json()
+        sym = (j.get("symbol") or "").upper()
+        ticker = fetch_binance_ticker(f"{sym}USDT")
+        return {
+            "id": j.get("id"),
+            "symbol": j.get("symbol"),
+            "name": j.get("name"),
+            "image": j.get("image", {}).get("large"),
+            "description": j.get("description", {}).get("en"),
+            "market_data": {
+                "current_price": (ticker["lastPrice"] if ticker else j.get("market_data", {}).get("current_price", {}).get("usd")),
+                "price_change_percentage_24h": (ticker["priceChangePercent"] if ticker else j.get("market_data", {}).get("price_change_percentage_24h")),
+            },
+        }
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Provider error: {str(e)}")
+
+@app.post("/api/portfolio")
+def create_portfolio(payload: CreatePortfolio):
+    data = payload.dict()
+    pid = create_document("portfolio", data)
+    return {"id": pid, **data}
+
+@app.get("/api/portfolio")
+def list_portfolios(limit: int = 50):
+    docs = get_documents("portfolio", {}, limit)
+    for d in docs:
+        d["_id"] = str(d.get("_id"))
+    return docs
 
 if __name__ == "__main__":
     import uvicorn
